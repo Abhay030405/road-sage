@@ -1,0 +1,81 @@
+# ── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+*.egg-info/
+dist/
+build/
+
+# Distribution
+*.egg
+*.whl
+PYTHONPATH
+
+# ── Environment & secrets ────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Jupyter ──────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ── ML / Model artifacts ─────────────────────────────────────────────────────
+*.pt
+*.pth
+*.onnx
+*.pkl
+*.h5
+*.tflite
+*.bin
+models/*.pt
+models/*.pth
+models/*.onnx
+
+# ── Data ─────────────────────────────────────────────────────────────────────
+data/mnnit/raw/
+data/mnnit/pseudo_labels/
+data/external/culane/
+data/external/tusimple/
+*.csv
+*.parquet
+
+# ── Logs & monitoring ────────────────────────────────────────────────────────
+logs/
+*.log
+
+# ── Docker ───────────────────────────────────────────────────────────────────
+.docker/
+
+# ── Testing & coverage ───────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# ── Ruff / linting cache ─────────────────────────────────────────────────────
+.ruff_cache/
+
+# ── OS ───────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── IDE ──────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Misc ─────────────────────────────────────────────────────────────────────
+*.tmp
+*.bak
+rgb/
