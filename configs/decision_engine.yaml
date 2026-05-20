@@ -1,0 +1,58 @@
+commands:
+  forward: FORWARD
+  left: LEFT
+  right: RIGHT
+  stop: STOP
+  class_map:
+    FORWARD: 0
+    LEFT: 1
+    RIGHT: 2
+    STOP: 3
+
+geometric:
+  offset_threshold: 0.3
+  curve_threshold: 0.005
+  strong_offset_threshold: 0.6
+  strong_curve_threshold: 0.012
+  min_lane_confidence: 0.75
+
+safety:
+  obstacle_stop_depth_threshold: 0.7
+  min_confidence: 0.60
+  temporal_consistency_frames: 3
+  smoothing_window: 5
+  max_command_jump: 2
+
+confidence_fusion:
+  weight_lane: 0.4
+  weight_geometric: 0.35
+  weight_ml: 0.25
+  min_geometric_signal: 0.1
+
+pseudo_labeling:
+  min_lane_confidence: 0.85
+  min_decision_confidence: 0.80
+  output_path: data/mnnit/pseudo_labels/labels.jsonl
+  image_base_dir: rgb
+
+ml_fallback:
+  model_path: models/decision_cnn.onnx
+  pytorch_path: models/decision_cnn.pth
+  input_size: [224, 224]
+  num_classes: 4
+  dropout_rate: 0.3
+  mc_dropout_samples: 10
+  uncertainty_threshold: 0.3
+
+training:
+  epochs: 50
+  early_stopping_patience: 10
+  batch_size: 32
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  label_smoothing: 0.1
+  train_split: 0.80
+  val_split: 0.10
+  test_split: 0.10
+  num_workers: 2
+  seed: 42

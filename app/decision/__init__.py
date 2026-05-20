@@ -1,0 +1,297 @@
+"""
+app.decision
+============
+
+Core shared types for the RoadSage decision engine.
+
+All other decision modules (geometric_logic, safety_gate,
+confidence_fusion, ml_fallback) import DriveCommand, DecisionPath,
+DecisionResult, and TemporalBuffer from here.
+"""
+
+from __future__ import annotations
+
+import logging
+from collections import Counter
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import List, Optional
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Enumerations
+# ---------------------------------------------------------------------------
+
+class DriveCommand(str, Enum):
+    """Discrete driving commands produced by the decision engine.
+
+    Inherits from ``str`` so instances serialise directly as JSON strings.
+    """
+
+    FORWARD = "FORWARD"
+    LEFT = "LEFT"
+    RIGHT = "RIGHT"
+    STOP = "STOP"
+
+    # -- class-level mapping (built once) ------------------------------------
+    _INT_MAP: dict = {}   # populated after class body via update below
+
+    def is_correction(self) -> bool:
+        """Return True if the command is a lateral correction (LEFT or RIGHT)."""
+        return self in (DriveCommand.LEFT, DriveCommand.RIGHT)
+
+    def is_safe_to_execute(self) -> bool:
+        """Return True unconditionally — STOP is always safe, others are gated upstream."""
+        return True
+
+    def opposite(self) -> "DriveCommand":
+        """Return the opposing lateral command; FORWARD and STOP map to themselves."""
+        _opposites = {
+            DriveCommand.LEFT: DriveCommand.RIGHT,
+            DriveCommand.RIGHT: DriveCommand.LEFT,
+            DriveCommand.FORWARD: DriveCommand.FORWARD,
+            DriveCommand.STOP: DriveCommand.STOP,
+        }
+        return _opposites[self]
+
+    def to_int(self) -> int:
+        """Return the integer class index used during model training."""
+        _map = {
+            DriveCommand.FORWARD: 0,
+            DriveCommand.LEFT: 1,
+            DriveCommand.RIGHT: 2,
+            DriveCommand.STOP: 3,
+        }
+        return _map[self]
+
+    @classmethod
+    def from_int(cls, i: int) -> "DriveCommand":
+        """Construct a DriveCommand from its integer class index.
+
+        Args:
+            i: Integer in ``{0, 1, 2, 3}``.
+
+        Returns:
+            Corresponding DriveCommand.
+
+        Raises:
+            ValueError: If ``i`` is outside the valid range.
+        """
+        _reverse = {0: cls.FORWARD, 1: cls.LEFT, 2: cls.RIGHT, 3: cls.STOP}
+        if i not in _reverse:
+            raise ValueError(f"Invalid DriveCommand index: {i!r}. Must be 0–3.")
+        return _reverse[i]
+
+
+class DecisionPath(str, Enum):
+    """Identifies which sub-system produced the final DriveCommand.
+
+    Used for logging, debugging, and confidence weighting in
+    :class:`~app.decision.confidence_fusion.ConfidenceFusion`.
+    """
+
+    GEOMETRIC = "geometric"
+    SINGLE_LANE = "single_lane"
+    ML_FALLBACK = "ml_fallback"
+    SAFETY_GATE = "safety_gate"
+    CONFIDENCE_GATE = "confidence_gate"
+
+
+# ---------------------------------------------------------------------------
+# Result dataclass
+# ---------------------------------------------------------------------------
+
+@dataclass
+class DecisionResult:
+    """Full output record from one decision-engine inference step.
+
+    Attributes:
+        command: The chosen DriveCommand.
+        confidence: Scalar confidence in [0, 1].
+        decision_path: Which sub-system produced this result.
+        offset_m: Signed lateral offset from lane centre in metres
+            (positive = vehicle is to the right of centre).
+        curvature_inv_m: Signed curvature (1/radius) of the detected lane
+            in m⁻¹ (positive = curving left).
+        geometric_signal_strength: Normalised strength of the geometric
+            signal; 0.0 means no geometric cue available.
+        ml_softmax: Raw softmax probabilities from the ML fallback model,
+            ordered as [FORWARD, LEFT, RIGHT, STOP]. None if ML was not
+            invoked.
+        hazard_detected: True if the safety gate triggered a STOP.
+        hazard_reason: Human-readable description of the hazard, if any.
+        inference_time_ms: Wall-clock time for the full decision pipeline
+            in milliseconds.
+    """
+
+    command: DriveCommand
+    confidence: float
+    decision_path: DecisionPath
+    offset_m: float = 0.0
+    curvature_inv_m: float = 0.0
+    geometric_signal_strength: float = 0.0
+    ml_softmax: Optional[List[float]] = None
+    hazard_detected: bool = False
+    hazard_reason: Optional[str] = None
+    inference_time_ms: float = 0.0
+
+    def is_stop(self) -> bool:
+        """Return True if the command is STOP."""
+        return self.command == DriveCommand.STOP
+
+    def is_safety_triggered(self) -> bool:
+        """Return True if the result was generated by the safety or confidence gate."""
+        return self.decision_path in (
+            DecisionPath.SAFETY_GATE,
+            DecisionPath.CONFIDENCE_GATE,
+        )
+
+    def describe(self) -> str:
+        """Return a one-line human-readable summary of this result.
+
+        Example::
+
+            "FORWARD (conf=0.91) via geometric | offset=+0.12m | curvature=0.003"
+        """
+        sign = "+" if self.offset_m >= 0 else ""
+        hazard_tag = f" | ⚠ {self.hazard_reason}" if self.hazard_detected else ""
+        return (
+            f"{self.command.value} (conf={self.confidence:.2f}) "
+            f"via {self.decision_path.value} | "
+            f"offset={sign}{self.offset_m:.2f}m | "
+            f"curvature={self.curvature_inv_m:.4f}"
+            f"{hazard_tag}"
+        )
+
+    def to_dict(self) -> dict:
+        """Serialise all fields to a JSON-compatible dictionary.
+
+        The ``command`` and ``decision_path`` values are stored as their
+        string representations so the dict round-trips cleanly through JSON.
+        """
+        return {
+            "command": self.command.value,
+            "confidence": self.confidence,
+            "decision_path": self.decision_path.value,
+            "offset_m": self.offset_m,
+            "curvature_inv_m": self.curvature_inv_m,
+            "geometric_signal_strength": self.geometric_signal_strength,
+            "ml_softmax": self.ml_softmax,
+            "hazard_detected": self.hazard_detected,
+            "hazard_reason": self.hazard_reason,
+            "inference_time_ms": self.inference_time_ms,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Temporal buffer
+# ---------------------------------------------------------------------------
+
+@dataclass
+class TemporalBuffer:
+    """Ring-buffer of recent DriveCommand results for temporal smoothing.
+
+    Maintains up to ``maxlen`` :class:`DecisionResult` objects and
+    provides helpers for dominant-command voting, consistency checks, and
+    exponentially-weighted confidence smoothing.
+
+    Attributes:
+        maxlen: Maximum number of results to retain. Older entries are
+            discarded when this limit is reached.
+    """
+
+    maxlen: int = 5
+    _buffer: List[DecisionResult] = field(default_factory=list)
+
+    def push(self, result: DecisionResult) -> None:
+        """Append *result* and evict the oldest entry if the buffer is full.
+
+        Args:
+            result: The latest :class:`DecisionResult` from the engine.
+        """
+        self._buffer.append(result)
+        if len(self._buffer) > self.maxlen:
+            self._buffer.pop(0)
+
+    def last_n(self, n: int) -> List[DecisionResult]:
+        """Return the *n* most recent results (or all if fewer are stored).
+
+        Args:
+            n: Number of results to retrieve.
+
+        Returns:
+            A list of at most *n* :class:`DecisionResult` objects,
+            ordered oldest → newest.
+        """
+        return self._buffer[-n:] if n > 0 else []
+
+    def dominant_command(self, n: int = 3) -> Optional[DriveCommand]:
+        """Return the most frequent command among the last *n* results.
+
+        In case of a tie the most recently seen command among the tied
+        group is returned.
+
+        Args:
+            n: Window size.
+
+        Returns:
+            The dominant :class:`DriveCommand`, or ``None`` if the buffer
+            is empty.
+        """
+        recent = self.last_n(n)
+        if not recent:
+            return None
+        counts = Counter(r.command for r in recent)
+        return counts.most_common(1)[0][0]
+
+    def is_consistent(self, n: int = 3) -> bool:
+        """Return True if all of the last *n* commands are identical.
+
+        Args:
+            n: Window size.
+
+        Returns:
+            ``True`` when every result in the window shares the same
+            command, ``False`` otherwise (including when the buffer has
+            fewer than *n* entries).
+        """
+        recent = self.last_n(n)
+        if len(recent) < n:
+            return False
+        return len({r.command for r in recent}) == 1
+
+    def smoothed_confidence(self, n: int = 5) -> float:
+        """Return a linearly-weighted mean confidence over the last *n* results.
+
+        Weights increase linearly from oldest (weight=1) to newest
+        (weight=n), so recent results contribute more strongly.
+
+        Args:
+            n: Window size (max 5 by default).
+
+        Returns:
+            Weighted mean confidence in [0, 1], or ``0.0`` if the buffer
+            is empty.
+        """
+        recent = self.last_n(n)
+        if not recent:
+            return 0.0
+        k = len(recent)
+        # weights 1, 2, …, k (oldest → newest)
+        weights = list(range(1, k + 1))
+        total_weight = sum(weights)
+        weighted_sum = sum(w * r.confidence for w, r in zip(weights, recent))
+        return weighted_sum / total_weight
+
+
+# ---------------------------------------------------------------------------
+# Public re-exports
+# ---------------------------------------------------------------------------
+
+__all__ = [
+    "DriveCommand",
+    "DecisionPath",
+    "DecisionResult",
+    "TemporalBuffer",
+]

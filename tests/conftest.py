@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 import yaml
 
-from app.decision.safety_gate import SceneContext
+from app.scene_understanding import SceneContext
 from app.lane_detection.lane_geometry import LaneGeometry
 
 _PROJECT_ROOT = Path(__file__).parent.parent
