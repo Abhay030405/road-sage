@@ -101,8 +101,9 @@ The system is designed to be:
 │  │ Lane         │         │ Scene Understanding│                        │
 │  │ Detection    │         │ (Obstacle/Context) │                        │
 │  │ Engine       │         │                    │                        │
-│  │ (UltraFast   │         │ (YOLOv8 + DepthEst)│                       │
-│  │  Lane Det v2)│         └────────┬───────────┘                       │
+│  │ (UltraFast   │         │ (NanoDet/YOLO +    │                       │
+│  │  Lane Det v2)│         │  MiDaS/DepthAny)   │                       │
+│  │  ResNet18/50)│         └────────┬───────────┘                       │
 │  └──────┬───────┘                  │                                   │
 │         │                          │                                   │
 │         └──────────┬───────────────┘                                   │
@@ -214,7 +215,8 @@ Every image goes through a stochastic augmentation pipeline:
 - Treats lanes as a **row-anchor classification** problem — extremely fast
 - 322 FPS on GPU, ~45 FPS on Jetson Nano
 - Works well on curved lanes
-- Backbone: ResNet-34 (light) or ResNet-101 (accurate) — we choose **ResNet-50 as sweet spot**
+- **CPU mode (default):** `ufldv2_resnet18` — lighter backbone, optimized for CPU/edge deployment (`UFLD_MODEL=ufldv2_resnet18`)
+- **GPU mode:** `ufldv2_resnet50` — better accuracy on complex scenes; swap via `UFLD_MODEL=ufldv2_resnet50` in `.env`
 - State-of-the-art on TuSimple (96.06% accuracy) and CULane
 
 **Lane Detection Outputs:**
@@ -248,21 +250,33 @@ offset = (left_lane_x + right_lane_x) / 2 - image_center_x
 
 Beyond lanes, the vehicle needs **spatial awareness.**
 
-#### 4.3.1 Object Detection — YOLOv8n (Nano)
-- Detects: persons, vehicles, cycles, auto-rickshaws, animals
-- YOLOv8n chosen for: **<5ms inference**, runs on edge
+#### 4.3.1 Object Detection
+
+| Mode | Model | `.env` variable |
+|---|---|---|
+| CPU (active) | `nanodet_plus_m` | `DETECTOR_MODEL=nanodet_plus_m` |
+| GPU swap | `yolov8n` | `DETECTOR_MODEL=yolov8n` |
+
+- **NanoDet-Plus-M (CPU default):** sub-5ms CPU inference; best-in-class for edge deployment; detects persons, vehicles, cyclists, auto-rickshaws, animals
+- **YOLOv8n (GPU swap):** higher mAP, faster throughput on CUDA; identical output schema
 - Fine-tuned on campus-specific classes (cyclist, pedestrian, cycle rickshaw)
 - Output: bounding boxes + class + distance estimate
 
-#### 4.3.2 Monocular Depth Estimation — MiDaS v2.1 Small
-- Generates a relative depth map from a single image
-- Used to estimate **how far ahead an obstacle is**
-- Does NOT require stereo camera
-- MiDaS Small: 30ms inference on CPU
+#### 4.3.2 Monocular Depth Estimation
+
+| Mode | Model | `.env` variable |
+|---|---|---|
+| CPU (active) | `midas_small` | `DEPTH_MODEL=midas_small` |
+| GPU swap | `depth_anything_v2` | `DEPTH_MODEL=depth_anything_v2` |
+
+- **MiDaS Small (CPU default):** ~30ms on CPU; generates relative depth map from a single image; no stereo camera required
+- **Depth Anything v2 (GPU swap):** state-of-the-art monocular depth accuracy, significantly better on complex/occluded scenes; requires CUDA
+- Used to estimate how far ahead an obstacle is; drives the hazard-stop fusion logic
 
 **Fusion Logic:**
 ```
-If YOLO detects obstacle AND MiDaS shows depth < threshold:
+If detector (NanoDet-Plus-M on CPU / YOLOv8n on GPU) detects obstacle
+AND depth model (MiDaS Small on CPU / Depth Anything v2 on GPU) shows depth < threshold:
     → Flag as "immediate hazard"
     → Override decision to STOP
 ```
@@ -313,9 +327,12 @@ STEP 3 — SINGLE LANE / EDGE CASE
       → Activate ML fallback classifier
 
 STEP 4 — ML FALLBACK CLASSIFIER
-  A lightweight CNN (MobileNetV3-Small) trained on:
-  - Visual features of MNNIT roads
-  - Pseudo-labeled with geometric decision logic (Step 2 as teacher)
+  A lightweight CNN trained on visual features of MNNIT roads,
+  pseudo-labeled by the geometric engine (Step 2 as teacher).
+
+  Model selection via FALLBACK_MODEL in .env:
+    CPU mode (active): MobileNetV3-Small  (FALLBACK_MODEL=mobilenetv3_small)
+    GPU swap:          EfficientNet-Lite0  (FALLBACK_MODEL=efficientnet_lite0)
   
   Outputs: softmax over [FORWARD, LEFT, RIGHT, STOP]
   Used ONLY when geometric approach fails
@@ -457,11 +474,34 @@ A **React + TailwindCSS** frontend with:
 
 ## 5. Technology Stack & Choices
 
+### Runtime Model Configuration (CPU vs GPU)
+
+All model variants are controlled by environment variables in `.env`. Two preset modes:
+
+| Component | CPU mode (active) | GPU mode | `.env` key |
+|---|---|---|---|
+| Lane detection | `ufldv2_resnet18` | `ufldv2_resnet50` | `UFLD_MODEL` |
+| Fallback CNN | `mobilenetv3_small` | `efficientnet_lite0` | `FALLBACK_MODEL` |
+| Object detection | `nanodet_plus_m` | `yolov8n` | `DETECTOR_MODEL` |
+| Depth estimation | `midas_small` | `depth_anything_v2` | `DEPTH_MODEL` |
+| Runtime device | `cpu` | `cuda` | `DEVICE` |
+
+To switch to GPU mode, update `.env`:
+```env
+DEVICE=cuda
+UFLD_MODEL=ufldv2_resnet50
+FALLBACK_MODEL=efficientnet_lite0
+DETECTOR_MODEL=yolov8n
+DEPTH_MODEL=depth_anything_v2
+```
+
+
 | Layer | Technology | Why |
 |---|---|---|
-| **Lane Detection** | UltraFast Lane Det v2 | Best speed-accuracy tradeoff; row-anchor approach handles curves |
-| **Object Detection** | YOLOv8n | Fastest YOLO variant; good on campus-scale objects |
-| **Depth Estimation** | MiDaS v2.1 Small | Monocular depth without stereo; lightweight |
+| **Lane Detection** | UFLDv2-ResNet18 (CPU) / UFLDv2-ResNet50 (GPU) | ResNet18 for CPU/edge speed; ResNet50 for GPU accuracy; swap via `UFLD_MODEL` |
+| **Object Detection** | NanoDet-Plus-M (CPU) / YOLOv8n (GPU) | NanoDet fastest on CPU; YOLOv8n for GPU throughput; swap via `DETECTOR_MODEL` |
+| **Depth Estimation** | MiDaS Small (CPU) / Depth Anything v2 (GPU) | MiDaS for edge; Depth Anything v2 for accuracy; swap via `DEPTH_MODEL` |
+| **Fallback CNN** | MobileNetV3-Small (CPU) / EfficientNet-Lite0 (GPU) | Lightweight decision classifier; swap via `FALLBACK_MODEL` |
 | **ML Framework** | PyTorch 2.x | Flexible, best ecosystem for CV research |
 | **Image Augmentation** | albumentations | 10x faster than torchvision transforms |
 | **Geometric Processing** | OpenCV 4.x | Industry standard for IPM, lane polynomial fitting |
@@ -486,7 +526,8 @@ A **React + TailwindCSS** frontend with:
 Input Image (800×288) 
     │
     ▼
-[Backbone: ResNet-50 pretrained on ImageNet]
+[Backbone: ResNet-18 (CPU default) or ResNet-50 (GPU) — pretrained on ImageNet]
+           controlled by: UFLD_MODEL=ufldv2_resnet18 | ufldv2_resnet50
     │
     ├── Feature Pyramid Network (FPN) 
     │   → Multi-scale features: P2, P3, P4, P5
@@ -509,13 +550,16 @@ Post-Processing:
     → Fit polynomial in BEV space
 ```
 
-### Decision CNN: MobileNetV3-Small (Fallback)
+### Decision CNN: Fallback Classifier
+
+**CPU mode (active):** `MobileNetV3-Small` — set via `FALLBACK_MODEL=mobilenetv3_small`  
+**GPU swap:** `EfficientNet-Lite0` — set via `FALLBACK_MODEL=efficientnet_lite0`
 
 ```
 Input: 224×224×3 image
     │
     ▼
-MobileNetV3-Small backbone (pretrained ImageNet)
+MobileNetV3-Small (CPU) or EfficientNet-Lite0 (GPU) backbone (pretrained ImageNet)
     │
     ▼
 Global Average Pooling
@@ -531,6 +575,8 @@ Softmax → Confidence scores
 ```
 
 **Trained using:** Pseudo-labels generated by the geometric decision engine on MNNIT images.
+
+> **Runtime device:** set `DEVICE=cpu` (default) or `DEVICE=cuda` in `.env` to switch the entire inference stack between CPU and GPU modes. All four `*_MODEL` env vars switch together — see the table below.
 
 ---
 
@@ -607,37 +653,63 @@ training/
 
 ### Training Commands
 
+> **Model selection is driven by `.env` vars at every step.** CPU mode is the default. To train with GPU models, export the GPU env block first (shown below).
+
 ```bash
+# ── CPU mode (default) ──────────────────────────────────────────
+export DEVICE=cpu
+export UFLD_MODEL=ufldv2_resnet18
+export FALLBACK_MODEL=mobilenetv3_small
+export DETECTOR_MODEL=nanodet_plus_m
+export DEPTH_MODEL=midas_small
+
+# ── GPU mode swap (uncomment to use) ────────────────────────────
+# export DEVICE=cuda
+# export UFLD_MODEL=ufldv2_resnet50
+# export FALLBACK_MODEL=efficientnet_lite0
+# export DETECTOR_MODEL=yolov8n
+# export DEPTH_MODEL=depth_anything_v2
+
 # Step 1: Pretrain lane detector on public data
+#   --backbone is read from UFLD_MODEL; resnet18 for CPU, resnet50 for GPU
 python trainers/train_lane.py \
     --config configs/lane_detection.yaml \
     --dataset tusimple+culane \
     --epochs 100 \
-    --backbone resnet50
+    --backbone $UFLD_MODEL      # resolves to resnet18 (CPU) or resnet50 (GPU)
 
 # Step 2: Generate pseudo-labels for MNNIT data
+#   Uses the detector + depth model set by env vars above
 python scripts/generate_pseudo_labels.py \
     --model checkpoints/lane_best.pth \
+    --detector $DETECTOR_MODEL \
+    --depth $DEPTH_MODEL \
+    --device $DEVICE \
     --input data/mnnit/raw/ \
     --output data/mnnit/pseudo_labels/ \
     --min_confidence 0.85
 
-# Step 3: Fine-tune on MNNIT
+# Step 3: Fine-tune lane detector on MNNIT pseudo-labels
 python trainers/train_lane.py \
     --config configs/lane_detection.yaml \
     --dataset mnnit_pseudo \
     --epochs 30 \
     --lr 1e-4 \
+    --backbone $UFLD_MODEL \
+    --device $DEVICE \
     --resume checkpoints/lane_best.pth
 
-# Step 4: Train decision CNN on geometric pseudo-labels
+# Step 4: Train fallback decision CNN on geometric pseudo-labels
+#   CPU: MobileNetV3-Small  |  GPU: EfficientNet-Lite0
 python trainers/train_decision.py \
     --config configs/decision_cnn.yaml \
     --dataset mnnit_with_commands \
+    --model $FALLBACK_MODEL \
+    --device $DEVICE \
     --epochs 50
 
-# Step 5: Export to ONNX
-python scripts/export_onnx.py --all
+# Step 5: Export all models to ONNX (respects env var model IDs)
+python scripts/export_onnx.py --all --device $DEVICE
 ```
 
 ### MLflow Tracking
@@ -651,9 +723,14 @@ python scripts/export_onnx.py --all
 
 ### Single Image Inference
 
+The engine reads `DEVICE`, `UFLD_MODEL`, `FALLBACK_MODEL`, `DETECTOR_MODEL`, and `DEPTH_MODEL` from the environment (or `.env`) at startup — no code change needed to switch modes.
+
 ```python
 from roadsage import RoadSageEngine
 
+# CPU mode: reads UFLD_MODEL=ufldv2_resnet18, DETECTOR_MODEL=nanodet_plus_m,
+#           DEPTH_MODEL=midas_small, FALLBACK_MODEL=mobilenetv3_small, DEVICE=cpu
+# GPU mode: set env vars before launching (see Section 8 Training Commands)
 engine = RoadSageEngine(config="configs/production.yaml")
 
 result = engine.predict("frame_042.jpg")
@@ -666,7 +743,13 @@ result = engine.predict("frame_042.jpg")
 #   "hazard": False,
 #   "gradcam_path": "outputs/gradcam_042.jpg",
 #   "lane_viz_path": "outputs/lane_042.jpg",
-#   "latency_ms": 47.3
+#   "latency_ms": 47.3,         # ~47ms CPU / ~12ms GPU
+#   "active_models": {
+#       "lane": "ufldv2_resnet18",
+#       "detector": "nanodet_plus_m",
+#       "depth": "midas_small",
+#       "fallback": "mobilenetv3_small"
+#   }
 # }
 ```
 
@@ -1000,16 +1083,19 @@ roadsage/
 - [ ] Set up MLflow experiment tracking
 
 ### Phase 2 — Core Models (Days 3–4)
-- [ ] Download and test UFLD v2 pretrained weights
+- [ ] Download pretrained weights for `ufldv2_resnet18` (CPU) and `ufldv2_resnet50` (GPU)
 - [ ] Implement BEV transform and lane geometry module
 - [ ] Implement geometric decision logic
-- [ ] Set up YOLOv8n for obstacle detection
-- [ ] Integrate MiDaS depth estimator
+- [ ] Set up `nanodet_plus_m` for CPU obstacle detection; validate `yolov8n` path for GPU swap
+- [ ] Integrate `midas_small` depth estimator; wire `depth_anything_v2` as GPU swap
+- [ ] Wire all four `*_MODEL` env vars into `app/engine.py` model loader
+- [ ] Validate CPU mode end-to-end on a laptop (no GPU required)
 
 ### Phase 3 — Self-Training (Day 5)
-- [ ] Run pseudo-label generation pipeline on MNNIT data
+- [ ] Run pseudo-label generation pipeline on MNNIT data (`DEVICE=cpu`, `UFLD_MODEL=ufldv2_resnet18`)
 - [ ] Fine-tune lane detector on pseudo-labeled MNNIT data
-- [ ] Train decision CNN on geometric pseudo-labels
+- [ ] Train fallback CNN — `mobilenetv3_small` (CPU) on geometric pseudo-labels
+- [ ] Optionally re-run training with `DEVICE=cuda` / `FALLBACK_MODEL=efficientnet_lite0` if GPU available
 - [ ] Implement confidence + safety gate
 
 ### Phase 4 — Explainability & API (Day 6)
@@ -1019,11 +1105,13 @@ roadsage/
 - [ ] Build React dashboard
 
 ### Phase 5 — Hardening & Demo Prep (Day 7)
-- [ ] Export all models to ONNX
-- [ ] Test on edge hardware (if available)
-- [ ] Run full evaluation on held-out MNNIT images
+- [ ] Export all models to ONNX (`python scripts/export_onnx.py --all --device $DEVICE`)
+- [ ] Verify CPU ONNX bundle: `ufldv2_resnet18`, `nanodet_plus_m`, `midas_small`, `mobilenetv3_small`
+- [ ] Verify GPU ONNX bundle: `ufldv2_resnet50`, `yolov8n`, `depth_anything_v2`, `efficientnet_lite0`
+- [ ] Test CPU bundle on edge hardware (Raspberry Pi / Jetson Nano)
+- [ ] Run full evaluation on held-out MNNIT images in both CPU and GPU modes; compare metrics
 - [ ] Set up Prometheus + Grafana monitoring
-- [ ] Prepare demo video (30-second highlight)
+- [ ] Prepare demo video (30-second highlight showing CPU live + GPU accuracy comparison)
 - [ ] Write final evaluation report
 
 ---
@@ -1049,20 +1137,25 @@ roadsage/
 **Rejected because:** Requires paired (image, steering command) data — impossible without a vehicle + sensor setup. Also, no interpretability.  
 **Chosen:** Geometric lane analysis → interpretable, no paired data needed.
 
-### Decision 2: Why UltraFast Lane Detection over Semantic Segmentation?
+### Decision 2: Why UFLD v2 with dual backbone (ResNet-18 / ResNet-50)?
 **Alternative:** DeepLabV3+, SegFormer — pixel-level road/lane segmentation  
 **Rejected because:** 150ms+ inference even on GPU; overkill for lane boundary extraction; harder to extract geometric parameters  
-**Chosen:** UFLD v2 — 5ms GPU inference, directly outputs lane coordinates, easy polynomial fitting
+**Chosen:** UFLD v2 with `ufldv2_resnet18` (CPU default, ~45 FPS on Jetson Nano) and `ufldv2_resnet50` (GPU swap, higher accuracy on complex curves). Same codebase — model swapped via `UFLD_MODEL` env var.
 
-### Decision 3: Why MiDaS over stereo depth?
+### Decision 3: Why MiDaS Small (CPU) / Depth Anything v2 (GPU) over stereo depth?
 **Alternative:** Stereo camera + disparity map (precise metric depth)  
 **Rejected because:** Requires hardware modification; stereo calibration complexity; not available in typical competition setup  
-**Chosen:** MiDaS monocular depth — works with a single camera, relative depth sufficient for stop/go decisions
+**Chosen:** Monocular depth pipeline — `midas_small` for CPU/edge (~30ms, relative depth sufficient for stop/go), `depth_anything_v2` for GPU (state-of-the-art accuracy on complex/occluded scenes). Both use the same fusion interface; swap via `DEPTH_MODEL`.
 
-### Decision 4: Why Hybrid decision engine over pure ML?
+### Decision 4: Why Hybrid decision engine with dual fallback CNN (MobileNetV3 / EfficientNet-Lite0)?
 **Alternative:** End-to-end ML classifier for all decisions  
 **Rejected because:** Requires thousands of labeled (image, command) pairs; black box; unsafe for demo  
-**Chosen:** Geometric rules for normal cases (transparent, reliable) + ML fallback for edge cases
+**Chosen:** Geometric rules for normal cases (transparent, reliable) + lightweight ML fallback. Fallback is `mobilenetv3_small` on CPU (fast, edge-deployable) and `efficientnet_lite0` on GPU (better accuracy with similar speed). Swap via `FALLBACK_MODEL`.
+
+### Decision 8: Why NanoDet-Plus-M (CPU) over YOLOv8n as the default detector?
+**Alternative:** YOLOv8n as single detector for all hardware  
+**Rejected because:** YOLOv8n requires CUDA for real-time throughput; CPU inference is ~3× slower than NanoDet on the same hardware  
+**Chosen:** `nanodet_plus_m` as CPU default (sub-5ms, anchor-free, excellent on edge); `yolov8n` as GPU swap for higher mAP when CUDA is available. Output schema is identical — no downstream code changes needed.
 
 ### Decision 5: Why albumentations over torchvision transforms?
 **Alternative:** torchvision.transforms (standard PyTorch)  
@@ -1099,11 +1192,15 @@ roadsage/
 ## Appendix A: Key Papers to Reference in Presentation
 
 1. **UltraFast Lane Detection v2** — Qinghao Feng et al., 2022
-2. **MiDaS: Towards Robust Monocular Depth Estimation** — Ranftl et al., 2020
-3. **YOLOv8** — Ultralytics, 2023
-4. **Pseudo-Label: The Simple and Efficient Semi-Supervised Learning Method** — Lee, 2013
-5. **GradCAM: Visual Explanations from Deep Networks** — Selvaraju et al., 2017
-6. **End-to-End Learning for Self-Driving Cars (DAVE-2)** — Bojarski et al., NVIDIA, 2016
+2. **MiDaS: Towards Robust Monocular Depth Estimation** — Ranftl et al., 2020 *(CPU depth model)*
+3. **Depth Anything v2** — Yang et al., 2024 *(GPU depth model — significantly outperforms MiDaS on complex scenes)*
+4. **NanoDet-Plus** — RangiLyu, 2021 *(CPU object detector — anchor-free, edge-optimized)*
+5. **YOLOv8** — Ultralytics, 2023 *(GPU object detector swap)*
+6. **MobileNetV3** — Howard et al., Google, 2019 *(CPU fallback CNN backbone)*
+7. **EfficientNet: Rethinking Model Scaling** — Tan & Le, Google, 2019 *(GPU fallback CNN backbone — Lite0 variant)*
+8. **Pseudo-Label: The Simple and Efficient Semi-Supervised Learning Method** — Lee, 2013
+9. **GradCAM: Visual Explanations from Deep Networks** — Selvaraju et al., 2017
+10. **End-to-End Learning for Self-Driving Cars (DAVE-2)** — Bojarski et al., NVIDIA, 2016
 
 ---
 
@@ -1113,27 +1210,51 @@ roadsage/
 # Clone and setup
 git clone https://github.com/yourteam/roadsage
 cd roadsage
+
+# CPU mode (default — no GPU required)
 pip install -r requirements.txt
 
-# Download pretrained models
-bash models/download_models.sh
+# GPU mode — also install GPU extras
+pip install -r requirements.txt -r requirements-edge.txt   # edge/pi
+# or: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 
-# Run on a single image
+# ── Set runtime mode via .env ────────────────────────────────────
+# CPU mode (copy and use as-is)
+cp configs/development.yaml .env   # already has CPU defaults
+
+# GPU mode (edit .env or export manually)
+export DEVICE=cuda
+export UFLD_MODEL=ufldv2_resnet50
+export FALLBACK_MODEL=efficientnet_lite0
+export DETECTOR_MODEL=yolov8n
+export DEPTH_MODEL=depth_anything_v2
+
+# Download pretrained model weights for active mode
+bash models/download_models.sh   # reads UFLD_MODEL / DETECTOR_MODEL / DEPTH_MODEL from env
+
+# Run on a single image (uses active env vars)
 python -m roadsage.engine --image path/to/road_image.jpg --output results/
 
 # Start API server
 uvicorn api.main:app --reload --port 8000
 
-# Start full stack with Docker
+# Start full stack with Docker (CPU mode by default via docker-compose.yml)
 docker-compose up --build
 
-# Run training pipeline
-python training/trainers/train_lane.py --config configs/lane_detection.yaml
+# Start full stack in GPU mode
+DEVICE=cuda UFLD_MODEL=ufldv2_resnet50 DETECTOR_MODEL=yolov8n \
+  DEPTH_MODEL=depth_anything_v2 FALLBACK_MODEL=efficientnet_lite0 \
+  docker-compose up --build
 
-# Run evaluation
+# Run training pipeline (CPU)
+DEVICE=cpu UFLD_MODEL=ufldv2_resnet18 FALLBACK_MODEL=mobilenetv3_small \
+  python training/trainers/train_lane.py --config configs/lane_detection.yaml
+
+# Run evaluation (compares CPU vs GPU model outputs)
 python training/evaluation/evaluate_decision.py \
     --test_dir data/mnnit/verified/ \
-    --model_path models/production/
+    --model_path models/production/ \
+    --device $DEVICE
 ```
 
 ---

@@ -1,0 +1,107 @@
+project:
+  name: RoadSage
+  version: "1.0.0"
+  environment: production
+
+device:
+  type: cpu           # options: cpu, cuda
+  use_onnx: true
+
+models:
+  lane_detector:
+    name: ufldv2_resnet18
+    path: models/lane_detector.onnx
+    input_size: [800, 288]
+    confidence_threshold: 0.75
+    num_lanes: 4
+    num_row_anchors: 72
+
+  object_detector:
+    name: nanodet_plus_m
+    path: models/object_detector.onnx
+    confidence_threshold: 0.5
+    nms_iou_threshold: 0.45
+    relevant_classes: [0, 1, 2, 3, 5, 7]   # person, bicycle, car, motorcycle, bus, truck
+
+  depth_estimator:
+    name: midas_small
+    path: models/depth_estimator.onnx
+    input_size: [384, 384]
+
+  decision_cnn:
+    name: mobilenetv3_small
+    path: models/decision_cnn.onnx
+    input_size: [224, 224]
+    num_classes: 4
+    dropout_rate: 0.3
+
+decision_engine:
+  offset_threshold: 0.3           # meters — trigger correction
+  curve_threshold: 0.005          # m^-1 — trigger turn command
+  obstacle_stop_distance: 2.0     # meters
+  obstacle_stop_depth_threshold: 0.7   # MiDaS relative depth value
+  min_confidence: 0.60            # below this → STOP
+  lane_conf_threshold: 0.75
+  pseudo_label_min_confidence: 0.85
+  temporal_consistency_frames: 3
+  smoothing_window: 5
+  path_corridor_fraction: 0.4     # center 40% of image width
+
+data:
+  raw_dir: data/mnnit/raw
+  verified_dir: data/mnnit/verified
+  pseudo_labels_dir: data/mnnit/pseudo_labels
+  image_extensions: [.jpg, .jpeg, .png]
+  source_folder: rgb              # our actual image folder name
+
+quality_filters:
+  blur_laplacian_threshold: 50
+  brightness_min: 30
+  brightness_max: 220
+  road_coverage_min: 0.20
+  dedup_similarity_threshold: 0.98
+
+api:
+  host: 0.0.0.0
+  port: 8000
+  gradcam_every_n_frames: 5
+  max_batch_concurrency: 4
+
+rate_limits:
+  predict_per_minute: 30
+  batch_per_minute: 5
+
+monitoring:
+  metrics_port: 9090
+  latency_window_size: 100
+
+bev_transform:
+  src_points: [[200, 720], [1100, 720], [685, 450], [595, 450]]
+  dst_points: [[300, 720], [980, 720], [980, 0], [300, 0]]
+  output_size: [1280, 720]
+  pixels_per_meter: 30.0
+
+augmentation:
+  enabled: true
+  clahe:
+    clip_limit: 2.0
+    tile_grid_size: [8, 8]
+    probability: 0.7
+  random_shadow:
+    probability: 0.5
+  random_brightness_contrast:
+    brightness_limit: 0.3
+    contrast_limit: 0.3
+    probability: 0.5
+  gaussian_blur:
+    blur_limit: 7
+    probability: 0.3
+  horizontal_flip:
+    probability: 0.5
+  perspective_transform:
+    scale: 0.1
+    probability: 0.4
+  random_rain:
+    probability: 0.2
+  random_fog:
+    probability: 0.2

@@ -1,0 +1,26 @@
+# RoadSage — edge / production inference only
+# Python 3.10+
+# No training, no ML experiment tracking, minimal footprint.
+
+# ── Computer vision ────────────────────────────────────────────────────────────
+opencv-python>=4.8.0
+Pillow>=10.0.0
+numpy>=1.24.0
+
+# ── Inference runtime ──────────────────────────────────────────────────────────
+onnxruntime>=1.16.0
+
+# ── API / serving ──────────────────────────────────────────────────────────────
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+python-multipart>=0.0.6
+websockets>=11.0
+slowapi>=0.1.8
+
+# ── Config / env ───────────────────────────────────────────────────────────────
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+PyYAML>=6.0
+
+# ── Monitoring ─────────────────────────────────────────────────────────────────
+prometheus-client>=0.17.0
