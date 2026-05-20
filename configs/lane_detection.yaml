@@ -1,0 +1,61 @@
+model:
+  name: ufldv2_resnet18
+  backbone: resnet18
+  onnx_path: models/lane_detector.onnx
+  pytorch_path: models/lane_detector.pth
+  use_onnx: true
+  device: cpu
+
+input:
+  width: 800
+  height: 288
+  mean: [0.485, 0.456, 0.406]
+  std: [0.229, 0.224, 0.225]
+
+row_anchors:
+  num_row_anchors: 72
+  num_lanes: 4
+  num_grid_cells: 200
+  row_anchor_start: 0.42    # fraction of image height where anchors begin
+  row_anchor_end: 1.0
+
+confidence:
+  lane_conf_threshold: 0.75      # minimum per-lane confidence to accept prediction
+  pseudo_label_threshold: 0.85   # minimum to generate pseudo-label from this frame
+  min_points_per_lane: 5         # reject lane if fewer than this many anchor points found
+
+bev_transform:
+  # Source points: trapezoid in original camera image (calibrated for MNNIT camera mount)
+  # These are (x, y) pixel coordinates — calibrated empirically from straight-road frames
+  src_points:
+    - [65, 455]
+    - [555, 440]
+    - [380, 285]
+    - [195, 285]
+  # Destination points: rectangle in BEV output image
+  dst_points:
+    - [100, 480]
+    - [540, 480]
+    - [540, 0]
+    - [100, 0]
+  output_width: 640
+  output_height: 480
+  pixels_per_meter: 25.0        # calibration: how many BEV pixels = 1 real-world meter
+
+polynomial:
+  degree: 2                     # 2nd degree polynomial: x = Ay^2 + By + C
+  curvature_threshold: 0.005    # m^-1 — above this is a meaningful curve
+  offset_threshold: 0.3         # meters — above this triggers a steering correction
+
+visualization:
+  left_lane_color: [0, 255, 0]        # green (BGR)
+  right_lane_color: [0, 255, 0]
+  center_lane_color: [255, 255, 0]    # cyan
+  low_conf_color: [0, 165, 255]       # orange
+  no_lane_color: [0, 0, 255]          # red
+  lane_thickness: 3
+  fill_alpha: 0.25                    # transparency of lane corridor fill
+
+performance:
+  target_latency_ms: 30               # CPU target for ONNX ResNet-18
+  batch_size: 1

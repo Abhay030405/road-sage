@@ -1,0 +1,43 @@
+object_detector:
+  name: nanodet_plus_m
+  onnx_path: models/object_detector.onnx
+  pytorch_path: models/object_detector.pth
+  use_onnx: true
+  device: cpu
+  input_size: [416, 416]
+  confidence_threshold: 0.5
+  nms_iou_threshold: 0.45
+  relevant_classes: [0, 1, 2, 3, 5, 7]
+  class_names:
+    0: person
+    1: bicycle
+    2: car
+    3: motorcycle
+    5: bus
+    7: truck
+  path_corridor_fraction: 0.4
+  target_latency_ms: 12
+
+depth_estimator:
+  name: midas_small
+  onnx_path: models/depth_estimator.onnx
+  pytorch_path: models/depth_estimator.pth
+  use_onnx: true
+  device: cpu
+  input_size: [384, 384]
+  obstacle_stop_depth_threshold: 0.7
+  target_latency_ms: 30
+
+surface_classifier:
+  name: mobilenetv2_surface
+  onnx_path: models/surface_classifier.onnx
+  input_size: [224, 224]
+  classes: [clean, pothole, speed_breaker, waterlogged]
+  confidence_threshold: 0.6
+  target_latency_ms: 5
+
+fusion:
+  obstacle_stop_distance_m: 2.0
+  path_corridor_fraction: 0.4
+  min_obstacle_confidence: 0.5
+  depth_roi_padding_px: 5
