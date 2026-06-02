@@ -1,124 +1,147 @@
-"""RoadSage API — Phase 1 skeleton.
+"""
+api.main
+=========
 
-Phase 1 scope: config validation, health endpoint, Prometheus metrics,
-structured logging.  Inference endpoints are Phase 5.
+RoadSage FastAPI application — Phase 5 (full inference stack).
 
-Start with:
+Startup sequence
+----------------
+1. Configure structured JSON logging.
+2. Load and validate ``configs/production.yaml`` (or ``$CONFIG_PATH``).
+3. Initialise :class:`~roadsage.engine.RoadSageEngine` (loads all model weights).
+4. Mount Prometheus metrics sub-app at ``/metrics``.
+5. Add CORS, request-logging, and rate-limiting middleware.
+6. Include route groups for inference, health, batch, and WebSocket streaming.
+
+Start with::
+
     uvicorn api.main:app --reload --port 8000
 """
 
 from __future__ import annotations
 
-import contextlib
-import datetime
-import json
 import logging
 import os
-import time
-from typing import Any
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
-import yaml
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from prometheus_client import Counter, Histogram, make_asgi_app
-from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.utils.config_validator import ConfigValidationError, load_and_validate_config
+from app.utils.config_validator import load_and_validate_config
+from app.engine import RoadSageEngine
 
-# ---------------------------------------------------------------------------
-# Prometheus metrics (module-level singletons)
-# ---------------------------------------------------------------------------
+# Route routers
+from api.routes.predict import router as predict_router
+from api.routes.health import router as health_router
+from api.routes.batch import router as batch_router
+from api.websocket.stream import router as ws_router
 
-REQUEST_COUNTER = Counter(
-    "roadsage_http_requests_total",
-    "Total number of HTTP requests received",
-    ["method", "endpoint", "status_code"],
+# Middleware
+from api.middleware.logging import RequestLoggingMiddleware
+from api.middleware.rate_limit import (
+    RateLimitExceeded,
+    _rate_limit_exceeded_handler,
+    limiter,
 )
 
+# ---------------------------------------------------------------------------
+# Prometheus metrics (module-level singletons — must be created once)
+# ---------------------------------------------------------------------------
+
+REQUEST_COUNT = Counter(
+    "roadsage_http_requests_total",
+    "Total HTTP requests",
+    ["method", "endpoint", "status"],
+)
 REQUEST_LATENCY = Histogram(
     "roadsage_request_latency_seconds",
-    "HTTP request latency in seconds",
-    ["method", "endpoint"],
+    "HTTP request latency",
+    ["endpoint"],
+)
+COMMAND_COUNT = Counter(
+    "roadsage_command_total",
+    "Driving commands predicted",
+    ["command"],
+)
+SAFETY_GATE_COUNT = Counter(
+    "roadsage_safety_gate_triggers_total",
+    "Safety gate trigger count",
+)
+LANE_DETECTION_FAILURES = Counter(
+    "roadsage_lane_detection_failures_total",
+    "Frames with no lanes detected",
+)
+ML_FALLBACK_COUNT = Counter(
+    "roadsage_ml_fallback_activations_total",
+    "ML fallback activations",
 )
 
 # ---------------------------------------------------------------------------
-# Structured JSON logging
+# Logging
 # ---------------------------------------------------------------------------
 
-
-class _JsonFormatter(logging.Formatter):
-    """Emit each log record as a single-line JSON object."""
-
-    def format(self, record: logging.LogRecord) -> str:
-        payload: dict[str, Any] = {
-            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
-            "level": record.levelname,
-            "logger": record.name,
-            "message": record.getMessage(),
-        }
-        if record.exc_info:
-            payload["exc_info"] = self.formatException(record.exc_info)
-        return json.dumps(payload)
-
-
-def _setup_logging() -> None:
-    """Configure root logger with JSON output at the level set by LOG_LEVEL."""
-    level_name = os.getenv("LOG_LEVEL", "INFO").upper()
-    level = getattr(logging, level_name, logging.INFO)
-
-    handler = logging.StreamHandler()
-    handler.setFormatter(_JsonFormatter())
-
-    root = logging.getLogger()
-    root.handlers.clear()
-    root.addHandler(handler)
-    root.setLevel(level)
-
-
-log = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# App-wide state (mutated during lifespan startup)
-# ---------------------------------------------------------------------------
-
-_START_TIME: datetime.datetime = datetime.datetime.utcnow()
-_CONFIG_VALID: bool = False
-_ENVIRONMENT: str = "production"
+logging.basicConfig(
+    level=logging.INFO,
+    format='{"time":"%(asctime)s","level":"%(levelname)s","msg":"%(message)s"}',
+)
+logger = logging.getLogger("roadsage")
 
 # ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
 
 
-@contextlib.asynccontextmanager
+@asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Run startup tasks, yield control to the server, then clean up."""
-    global _CONFIG_VALID, _ENVIRONMENT
+    """Run startup / shutdown tasks around the server lifetime.
 
-    _setup_logging()
-    log.info("RoadSage API starting up...")
+    Startup:
+
+    1. Load and validate ``configs/production.yaml``.
+    2. Initialise the :class:`~roadsage.engine.RoadSageEngine`; store on
+       ``app.state.engine``.
+    3. Record ``app.state.start_time`` (float, seconds since epoch) for
+       uptime calculations.
+
+    Shutdown:
+
+    * Logs a clean shutdown message.
+
+    Any exception during engine initialisation is caught and logged —
+    the API still starts so health and metadata endpoints remain reachable.
+    """
+    logger.info("RoadSage API starting up...")
 
     config_path = os.getenv("CONFIG_PATH", "configs/production.yaml")
+
+    # Config
     try:
         config = load_and_validate_config(config_path)
-        _CONFIG_VALID = True
-        _ENVIRONMENT = config.get("project", {}).get("environment", "production")
-        log.info("Config loaded and validated from '%s'.", config_path)
-    except ConfigValidationError as exc:
-        log.warning("Config validation failed: %s", exc)
-        _CONFIG_VALID = False
+        app.state.config = config
+        env = config.get("project", {}).get("environment", "production")
+        logger.info("Config loaded from '%s' (env=%s).", config_path, env)
     except Exception as exc:  # noqa: BLE001
-        log.warning("Unexpected error loading config: %s", exc)
-        _CONFIG_VALID = False
+        logger.warning("Config load failed: %s — using empty config.", exc)
+        app.state.config = {}
 
-    # Phase 1: models are not loaded yet.
-    app.state.models_loaded = False
-    log.info("Phase 1: model loading deferred to Phase 5.")
+    app.state.start_time = datetime.now(timezone.utc)
+
+    # Engine
+    try:
+        app.state.engine = RoadSageEngine(config_path)
+        app.state.models_loaded = True
+        logger.info("Engine initialized. API ready.")
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Failed to initialise RoadSageEngine: %s", exc)
+        app.state.engine = None
+        app.state.models_loaded = False
 
     yield
 
-    log.info("RoadSage API shut down cleanly.")
+    logger.info("RoadSage API shutting down.")
 
 
 # ---------------------------------------------------------------------------
@@ -127,56 +150,87 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="RoadSage API",
-    description="Vision-Based Lane Understanding and Intelligent Driving Decision Engine",
+    description=(
+        "Vision-Based Lane Understanding & Intelligent Driving Decision Engine. "
+        "POST a camera frame to ``/api/v1/predict`` to receive a driving command "
+        "with confidence score, lane geometry, hazard status, and optional "
+        "GradCAM / lane-overlay visualizations.  Connect to ``/ws/live`` for "
+        "low-latency streaming inference."
+    ),
     version="1.0.0",
     lifespan=lifespan,
 )
 
-# Default state so the health endpoint never raises AttributeError when the
-# lifespan hasn't run (e.g. during unit tests without a context manager).
+# Safe defaults so unit tests that skip the lifespan never raise AttributeError
+app.state.engine = None
 app.state.models_loaded = False
+app.state.config = {}
+app.state.start_time = datetime.now(timezone.utc)
 
-# Mount Prometheus metrics scrape endpoint before middleware so the metrics
-# ASGI app is a proper sub-mount and not double-counted.
+# ---------------------------------------------------------------------------
+# Rate limiting
+# ---------------------------------------------------------------------------
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# ---------------------------------------------------------------------------
+# Prometheus metrics sub-app
+#
+# Mounted before middleware so the /metrics ASGI sub-app is not
+# double-counted by the Prometheus middleware itself.
+# ---------------------------------------------------------------------------
+
 metrics_app = make_asgi_app()
 app.mount("/metrics", metrics_app)
 
 # ---------------------------------------------------------------------------
-# Middleware  (added in reverse wrapping order: last added = outermost)
+# Middleware  (added innermost-first — last added = outermost wrapper)
+# CORSMiddleware must be outermost so pre-flight OPTIONS requests are
+# handled before any other middleware runs, including logging.
 # ---------------------------------------------------------------------------
 
-
-class _PrometheusMiddleware(BaseHTTPMiddleware):
-    """Record per-request counters and latency histograms."""
-
-    async def dispatch(self, request: Request, call_next):
-        start = time.perf_counter()
-        response = await call_next(request)
-        duration = time.perf_counter() - start
-
-        endpoint = request.url.path
-        method = request.method
-        status_code = str(response.status_code)
-
-        REQUEST_COUNTER.labels(
-            method=method,
-            endpoint=endpoint,
-            status_code=status_code,
-        ).inc()
-        REQUEST_LATENCY.labels(method=method, endpoint=endpoint).observe(duration)
-
-        return response
-
-
-# Inner middleware first, outer last.
-app.add_middleware(_PrometheusMiddleware)
+app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------------------------
+# Routers
+# ---------------------------------------------------------------------------
+
+_API_PREFIX = "/api/v1"
+
+app.include_router(predict_router, prefix=_API_PREFIX, tags=["inference"])
+app.include_router(health_router,  prefix=_API_PREFIX, tags=["health"])
+app.include_router(batch_router,   prefix=_API_PREFIX, tags=["batch"])
+app.include_router(ws_router,      prefix="/ws",       tags=["streaming"])
+
+# ---------------------------------------------------------------------------
+# Root endpoint
+# ---------------------------------------------------------------------------
+
+
+@app.get("/", tags=["meta"])
+async def root():
+    """Return service metadata and quick-start endpoint links.
+
+    Returns:
+        JSON with ``service``, ``version``, and links to ``/docs``,
+        ``/api/v1/health``, ``/api/v1/predict``, and ``/ws/live``.
+    """
+    return {
+        "service": "RoadSage API",
+        "version": "1.0.0",
+        "docs": "/docs",
+        "health": "/api/v1/health",
+        "predict": "/api/v1/predict",
+        "stream": "/ws/live",
+    }
+
 
 # ---------------------------------------------------------------------------
 # Global exception handler
@@ -184,38 +238,18 @@ app.add_middleware(
 
 
 @app.exception_handler(Exception)
-async def _global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    log.exception("Unhandled exception on %s %s", request.method, request.url.path)
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Catch any unhandled exception and return a structured 500 response.
+
+    Args:
+        request: The originating FastAPI request.
+        exc: The unhandled exception.
+
+    Returns:
+        ``500 Internal Server Error`` JSON with ``error`` and ``type`` fields.
+    """
+    logger.exception("Unhandled exception on %s %s: %s", request.method, request.url.path, exc)
     return JSONResponse(
         status_code=500,
         content={"error": str(exc), "type": type(exc).__name__},
     )
-
-
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
-
-
-@app.get("/", tags=["meta"])
-async def root():
-    """Landing redirect — points clients to /docs."""
-    return {"message": "RoadSage API is running. See /docs for API documentation."}
-
-
-@app.get("/api/v1/health", tags=["meta"])
-async def health():
-    """Liveness / readiness probe used by Docker healthcheck and load balancers.
-
-    Always returns HTTP 200 in Phase 1 even when models are not loaded,
-    so the container is considered healthy as soon as the server is up.
-    """
-    uptime = (datetime.datetime.utcnow() - _START_TIME).total_seconds()
-    return {
-        "status": "healthy",
-        "version": "1.0.0",
-        "models_loaded": app.state.models_loaded,
-        "config_valid": _CONFIG_VALID,
-        "uptime_seconds": round(uptime, 2),
-        "environment": _ENVIRONMENT,
-    }
