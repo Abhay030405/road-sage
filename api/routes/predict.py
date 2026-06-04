@@ -22,6 +22,8 @@ import numpy as np
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
 
+from api.metrics import record_prediction_metrics
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -154,6 +156,7 @@ async def predict(
         result.latency_ms["total"],
     )
 
+    record_prediction_metrics(result)
     return JSONResponse(content=result.to_dict(), status_code=200)
 
 
@@ -216,4 +219,5 @@ async def predict_sample(
         result.latency_ms["total"],
     )
 
+    record_prediction_metrics(result)
     return JSONResponse(content=result.to_dict(), status_code=200)

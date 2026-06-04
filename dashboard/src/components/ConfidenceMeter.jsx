@@ -1,82 +1,62 @@
-import { RadialBarChart, RadialBar, PolarAngleAxis, ResponsiveContainer } from "recharts";
+import { RadialBarChart, RadialBar, ResponsiveContainer } from 'recharts'
+import { useRoadSage } from '../context/RoadSageContext'
 
-function getColor(c) {
-  if (c >= 0.8) return "var(--accent-green)";
-  if (c >= 0.5) return "var(--accent-yellow)";
-  return "var(--accent-red)";
+function getConfidenceMeta(pct) {
+  if (pct >= 80) return { color: '#22c55e', statusColor: 'text-rs-green', label: 'HIGH CONFIDENCE' }
+  if (pct >= 60) return { color: '#f59e0b', statusColor: 'text-rs-amber', label: 'MODERATE' }
+  return { color: '#ef4444', statusColor: 'text-rs-red', label: 'LOW — STOPPING' }
 }
 
-function getLabel(c) {
-  if (c >= 0.85) return { text: "High",   badge: "badge-green"  };
-  if (c >= 0.6)  return { text: "Medium", badge: "badge-yellow" };
-  return           { text: "Low",    badge: "badge-red"    };
-}
+function ConfidenceMeter() {
+  const { latestResult } = useRoadSage()
+  const confidence = latestResult?.confidence ?? 0
+  const pct = Math.round(confidence * 100)
+  const { color, statusColor, label } = getConfidenceMeta(pct)
 
-export function ConfidenceMeter({ confidence = 0 }) {
-  const pct   = Math.round(confidence * 100);
-  const color = getColor(confidence);
-  const meta  = getLabel(confidence);
-  const data  = [{ value: pct }];
+  const data = [{ value: pct, fill: color }]
 
   return (
-    <div className="card">
-      <div className="section-title">Decision Confidence</div>
+    <div className="bg-rs-panel rounded-lg border border-rs-border p-4">
+      <div className="text-xs text-rs-muted mb-3 font-medium">Confidence</div>
 
-      <div style={{ position: "relative", height: 150 }}>
+      <div className="relative h-32">
         <ResponsiveContainer width="100%" height="100%">
           <RadialBarChart
-            cx="50%" cy="55%"
-            innerRadius="62%" outerRadius="88%"
-            startAngle={210} endAngle={-30}
+            innerRadius="65%"
+            outerRadius="100%"
             data={data}
+            startAngle={200}
+            endAngle={-20}
+            barSize={12}
           >
-            <PolarAngleAxis type="number" domain={[0, 100]} angleAxisId={0} tick={false} />
             <RadialBar
+              background={{ fill: '#1e1e2e' }}
               dataKey="value"
-              cornerRadius={8}
-              fill={color}
-              background={{ fill: "var(--bg-elevated)" }}
+              cornerRadius={6}
+              max={100}
             />
           </RadialBarChart>
         </ResponsiveContainer>
 
-        <div
-          style={{
-            position: "absolute",
-            top: "54%", left: "50%",
-            transform: "translate(-50%, -50%)",
-            textAlign: "center",
-            pointerEvents: "none",
-          }}
-        >
-          <div style={{ fontSize: "28px", fontWeight: 800, color, letterSpacing: "-1px", lineHeight: 1 }}>
-            {pct}<span style={{ fontSize: "14px" }}>%</span>
-          </div>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className="text-2xl font-black" style={{ color }}>
+            {pct}%
+          </span>
+          <span className="text-xs text-rs-muted">confidence</span>
         </div>
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "4px" }}>
-        <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>Fusion score</span>
-        <span className={`badge ${meta.badge}`}>{meta.text}</span>
+      <div className="mt-2 flex items-center justify-between text-xs text-rs-muted">
+        <span>0%</span>
+        <span className="text-rs-amber">⬤ 60% safety threshold</span>
+        <span>100%</span>
       </div>
 
-      {/* Segmented ticks */}
-      <div style={{ display: "flex", gap: "3px", marginTop: "10px" }}>
-        {Array.from({ length: 20 }, (_, i) => (
-          <div
-            key={`tick-${i}`}
-            style={{
-              flex: 1,
-              height: "4px",
-              borderRadius: "2px",
-              background: i < Math.round(pct / 5) ? color : "var(--bg-elevated)",
-              transition: "background 0.4s",
-            }}
-          />
-        ))}
+      <div className={`mt-2 text-center text-xs font-medium ${statusColor}`}>
+        {label}
       </div>
     </div>
-  );
+  )
 }
 
-export default ConfidenceMeter;
+export default ConfidenceMeter

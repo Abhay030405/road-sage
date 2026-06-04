@@ -1,64 +1,63 @@
-const DECISION_META = {
-  LANE_KEEP:         { label: "Lane Keep",     badge: "badge-green",  icon: "→", glow: "rgba(52,211,153,0.18)" },
-  LANE_CHANGE_LEFT:  { label: "Lane Change ←", badge: "badge-yellow", icon: "←", glow: "rgba(251,191,36,0.18)" },
-  LANE_CHANGE_RIGHT: { label: "Lane Change →", badge: "badge-yellow", icon: "→", glow: "rgba(251,191,36,0.18)" },
-  SLOW_DOWN:         { label: "Slow Down",     badge: "badge-red",    icon: "⚠", glow: "rgba(248,113,113,0.18)" },
-  STOP:              { label: "STOP",          badge: "badge-red",    icon: "■", glow: "rgba(248,113,113,0.3)"  },
-};
+import { useRoadSage } from '../context/RoadSageContext'
+import { COMMAND_COLORS, COMMAND_ICONS, DECISION_PATH_LABELS } from '../constants'
+import { formatConfidence } from '../utils/helpers'
 
-const BORDER_COLOR = {
-  "badge-green":  "var(--accent-green)",
-  "badge-yellow": "var(--accent-yellow)",
-  "badge-red":    "var(--accent-red)",
-};
+function DecisionPanel() {
+  const { latestResult } = useRoadSage()
 
-export function DecisionPanel({ decision = "LANE_KEEP", confidence = 0 }) {
-  const meta = DECISION_META[decision] ?? { label: decision, badge: "badge-blue", icon: "?", glow: "transparent" };
-  const borderColor = BORDER_COLOR[meta.badge] ?? "var(--accent-blue)";
+  if (!latestResult) {
+    return (
+      <div className="bg-rs-panel rounded-lg border border-rs-border p-4 h-40
+                      animate-pulse flex items-center justify-center">
+        <div className="w-24 h-12 bg-rs-border rounded" />
+      </div>
+    )
+  }
+
+  const command = latestResult?.command || 'STOP'
+  const colors = COMMAND_COLORS[command] ?? COMMAND_COLORS.STOP
+  const isStop = command === 'STOP'
 
   return (
-    <div className="card">
-      <div className="section-title">Current Decision</div>
+    <div className="bg-rs-panel rounded-lg border border-rs-border overflow-hidden">
 
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "16px",
-          padding: "18px",
-          background: meta.glow,
-          borderRadius: "var(--r-sm)",
-          border: `1.5px solid ${borderColor}`,
-          transition: "all 0.3s ease",
-        }}
-      >
-        <div
-          style={{
-            width: 52, height: 52,
-            borderRadius: 12,
-            background: `color-mix(in srgb, ${borderColor} 15%, transparent)`,
-            border: `1px solid color-mix(in srgb, ${borderColor} 40%, transparent)`,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: "24px",
-            flexShrink: 0,
-          }}
-        >
-          {meta.icon}
-        </div>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: "17px", fontWeight: 700, color: borderColor, letterSpacing: "-0.2px" }}>
-            {meta.label}
-          </div>
-          <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "3px" }}>
-            {(confidence * 100).toFixed(1)}% confidence
-          </div>
-        </div>
-        <span className={`badge ${meta.badge}`}>Active</span>
+      <div className={`${colors.bg} flex items-center justify-center gap-3 py-6
+                      ${isStop ? 'animate-pulse' : ''}`}>
+        <span className="text-5xl font-black text-white">
+          {COMMAND_ICONS[command] ?? '?'}
+        </span>
+        <span className="text-4xl font-black text-white tracking-wider">
+          {command}
+        </span>
       </div>
+
+      <div className="px-4 py-3 flex justify-between items-center">
+        <div>
+          <div className="text-xs text-rs-muted mb-0.5">Confidence</div>
+          <div className="text-lg font-bold" style={{ color: colors.hex }}>
+            {formatConfidence(latestResult?.confidence || 0)}
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="text-xs text-rs-muted mb-0.5">Decision Path</div>
+          <div className="text-sm text-rs-text">
+            {DECISION_PATH_LABELS[latestResult?.decision_path] || '--'}
+          </div>
+        </div>
+      </div>
+
+      {latestResult?.hazard_detected && (
+        <div className="bg-rs-red bg-opacity-20 border-t border-rs-red px-4 py-2
+                        flex items-center gap-2">
+          <span className="text-rs-red text-xs font-medium">⚠ HAZARD:</span>
+          <span className="text-rs-red text-xs">
+            {latestResult.hazard_reason || 'obstacle detected'}
+          </span>
+        </div>
+      )}
+
     </div>
-  );
+  )
 }
 
-export default DecisionPanel;
+export default DecisionPanel

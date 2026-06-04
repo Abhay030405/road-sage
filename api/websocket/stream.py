@@ -76,6 +76,8 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from api.metrics import record_prediction_metrics
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -216,6 +218,8 @@ async def websocket_stream(websocket: WebSocket) -> None:
 
             session.frames_processed += 1
             last_process_time = time.time()
+
+            record_prediction_metrics(result)
 
             await websocket.send_json({
                 "type": "prediction",

@@ -1,68 +1,110 @@
-function barColor(v) {
-  if (v >= 85) return "var(--accent-red)";
-  if (v >= 60) return "var(--accent-yellow)";
-  return "var(--accent-green)";
-}
+import { useState, useEffect } from 'react'
+import { useRoadSage } from '../context/RoadSageContext'
+import { API_URL, HEALTH_POLL_INTERVAL_MS } from '../constants'
 
-function ResourceBar({ label, value }) {
-  const color = barColor(value);
+function StatusDot({ ok, label }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-      <span style={{ width: "32px", fontSize: "11px", fontWeight: 600, color: "var(--text-muted)", letterSpacing: "0.04em" }}>
-        {label}
-      </span>
-      <div className="progress-track" style={{ flex: 1 }}>
-        <div className="progress-fill" style={{ width: `${value}%`, background: color }} />
-      </div>
-      <span style={{ width: "32px", textAlign: "right", fontSize: "12px", fontWeight: 600, color }}>
-        {value}%
-      </span>
+    <div className="flex items-center gap-1.5">
+      <span className={`w-2 h-2 rounded-full ${ok ? 'bg-rs-green' : 'bg-rs-red'}`} />
+      <span className="text-xs text-rs-muted">{label}</span>
     </div>
-  );
+  )
 }
 
-export function SystemHealth({ system = {} }) {
-  const { cpu = 0, gpu = 0, ram = 0, inference_ms = 0, model_version = "—", uptime_s = 0 } = system;
-  const uptime = `${Math.floor(uptime_s / 3600)}h ${Math.floor((uptime_s % 3600) / 60)}m`;
-  let inferenceColor;
-  if (inference_ms > 60)      inferenceColor = "var(--accent-red)";
-  else if (inference_ms > 40) inferenceColor = "var(--accent-yellow)";
-  else                        inferenceColor = "var(--accent-green)";
+function MetricBox({ label, value, color = 'text-rs-text' }) {
+  return (
+    <div className="bg-rs-bg rounded p-2 text-center">
+      <div className={`text-lg font-mono font-bold ${color}`}>{value}</div>
+      <div className="text-xs text-rs-muted mt-0.5">{label}</div>
+    </div>
+  )
+}
+
+function SystemHealth() {
+  const { sessionFps, history } = useRoadSage()
+  const [healthData, setHealthData] = useState(null)
+  const [pollError, setPollError] = useState(false)
+
+  useEffect(() => {
+    const poll = () => {
+      fetch(`${API_URL}/api/v1/health`)
+        .then(r => r.json())
+        .then(data => { setHealthData(data); setPollError(false) })
+        .catch(() => setPollError(true))
+    }
+    poll()
+    const id = setInterval(poll, HEALTH_POLL_INTERVAL_MS)
+    return () => clearInterval(id)
+  }, [])
+
+  const recentLatencies = history
+    .slice(0, 20)
+    .map(h => h.latency_ms?.total)
+    .filter(Boolean)
+  const avgLatency = recentLatencies.length
+    ? recentLatencies.reduce((a, b) => a + b, 0) / recentLatencies.length
+    : 0
+  const p95Latency = recentLatencies.length
+    ? [...recentLatencies].sort((a, b) => a - b)[Math.floor(recentLatencies.length * 0.95)]
+    : 0
 
   return (
-    <div className="card" style={{ minWidth: "280px" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "14px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent-blue)" strokeWidth="2">
-            <rect x="4" y="4" width="16" height="16" rx="2" />
-            <rect x="9" y="9" width="6" height="6" />
-            <path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3" />
-          </svg>
-          <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-secondary)" }}>System</span>
-        </div>
-        <span className="badge badge-indigo" style={{ fontSize: "10px" }}>{model_version}</span>
+    <div className="bg-rs-panel rounded-lg border border-rs-border p-4 flex flex-col gap-3">
+
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-rs-muted font-medium">System Health</span>
+        <span className={`text-xs ${pollError ? 'text-rs-red' : 'text-rs-green'}`}>
+          {pollError ? '● API offline' : '● API online'}
+        </span>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "14px" }}>
-        <ResourceBar label="CPU" value={cpu} />
-        <ResourceBar label="GPU" value={gpu} />
-        <ResourceBar label="RAM" value={ram} />
+      <div className="grid grid-cols-2 gap-2">
+        <MetricBox
+          label="Session FPS"
+          value={sessionFps.toFixed(1)}
+          color={sessionFps > 5 ? 'text-rs-green' : 'text-rs-amber'}
+        />
+        <MetricBox
+          label="Avg Latency"
+          value={avgLatency ? `${avgLatency.toFixed(0)}ms` : '--'}
+          color={avgLatency < 100 ? 'text-rs-green' : 'text-rs-amber'}
+        />
+        <MetricBox
+          label="P95 Latency"
+          value={p95Latency ? `${p95Latency.toFixed(0)}ms` : '--'}
+          color={p95Latency < 200 ? 'text-rs-green' : 'text-rs-red'}
+        />
+        <MetricBox
+          label="Frames"
+          value={healthData?.frames_processed ?? history.length}
+        />
       </div>
 
-      <div className="divider" />
-
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px" }}>
-        <div>
-          <span style={{ color: "var(--text-muted)" }}>Inference </span>
-          <span style={{ fontWeight: 700, color: inferenceColor }}>{inference_ms} ms</span>
-        </div>
-        <div>
-          <span style={{ color: "var(--text-muted)" }}>Uptime </span>
-          <span style={{ fontWeight: 700, color: "var(--text-primary)" }}>{uptime}</span>
-        </div>
+      <div className="space-y-1.5">
+        <div className="text-xs text-rs-muted mb-1">Model Status</div>
+        <StatusDot
+          ok={healthData?.models?.lane_detector ?? false}
+          label="Lane Detector (UFLD v2)"
+        />
+        <StatusDot
+          ok={healthData?.models?.scene_analyzer ?? false}
+          label="Scene Analyzer (NanoDet + MiDaS)"
+        />
+        <StatusDot
+          ok={healthData?.models?.ml_fallback ?? false}
+          label="Decision CNN (MobileNetV3)"
+        />
       </div>
+
+      {healthData && (
+        <div className="text-xs text-rs-muted border-t border-rs-border pt-2">
+          Uptime: {Math.floor(healthData.uptime_seconds / 60)}m{' '}
+          {Math.floor(healthData.uptime_seconds % 60)}s
+        </div>
+      )}
+
     </div>
-  );
+  )
 }
 
-export default SystemHealth;
+export default SystemHealth

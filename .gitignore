@@ -21,6 +21,15 @@ venv/
 env/
 .env/
 ENV/
+node_modules/
+
+# -----------------------------------------------------------------------------
+# Frontend / JS build artifacts
+# -----------------------------------------------------------------------------
+.vite/
+dist-ssr/
+coverage/
+*.tsbuildinfo
 
 # -----------------------------------------------------------------------------
 # Python packaging & build artifacts
@@ -109,6 +118,7 @@ logs/
 # Testing & coverage
 # -----------------------------------------------------------------------------
 .pytest_cache/
+.hypothesis/
 .coverage
 .coverage.*
 coverage.xml

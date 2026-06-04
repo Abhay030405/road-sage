@@ -1,104 +1,106 @@
-export function VideoFeed({ fps = 0, detections = [], surface = "unknown" }) {
-  const surfaceLabel = surface.replaceAll("_", " ");
+import { useRef, useEffect, useState } from 'react'
+import { useRoadSage } from '../context/RoadSageContext'
+
+function drawLaneLines(ctx, points, color, lineWidth = 3) {
+  if (!points || points.length === 0) return
+  ctx.beginPath()
+  ctx.strokeStyle = color
+  ctx.lineWidth = lineWidth
+  ctx.moveTo(points[0][0], points[0][1])
+  for (let i = 1; i < points.length; i++) {
+    ctx.lineTo(points[i][0], points[i][1])
+  }
+  ctx.stroke()
+}
+
+function VideoFeed() {
+  const { latestResult } = useRoadSage()
+  const canvasRef = useRef(null)
+  const [showGradCam, setShowGradCam] = useState(false)
+  const [showOverlay, setShowOverlay] = useState(true)
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+
+    if (latestResult?.lane_viz_base64 && showOverlay) {
+      const img = new Image()
+      img.onload = () => {
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+        if (latestResult.left_lane_points) {
+          const color = latestResult.left_lane_detected ? '#22c55e' : '#ef4444'
+          drawLaneLines(ctx, latestResult.left_lane_points, color)
+        }
+        if (latestResult.right_lane_points) {
+          const color = latestResult.right_lane_detected ? '#22c55e' : '#ef4444'
+          drawLaneLines(ctx, latestResult.right_lane_points, color)
+        }
+      }
+      img.src = `data:image/jpeg;base64,${latestResult.lane_viz_base64}`
+    } else if (latestResult?.gradcam_base64 && showGradCam) {
+      const img = new Image()
+      img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+      img.src = `data:image/jpeg;base64,${latestResult.gradcam_base64}`
+    } else {
+      ctx.fillStyle = '#111118'
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+      ctx.fillStyle = '#64748b'
+      ctx.font = '16px system-ui'
+      ctx.textAlign = 'center'
+      ctx.fillText('Waiting for frames...', canvas.width / 2, canvas.height / 2)
+    }
+  }, [latestResult, showOverlay, showGradCam])
 
   return (
-    <div className="card">
-      <div className="section-title">
-        Camera Feed
-        <div style={{ marginLeft: "auto", display: "flex", gap: "6px" }}>
-          <span className="badge badge-cyan">{fps} fps</span>
-          <span className="badge badge-indigo">{surfaceLabel}</span>
+    <div className="bg-rs-panel rounded-lg border border-rs-border overflow-hidden flex flex-col h-full">
+
+      <div className="flex items-center justify-between px-4 py-2 border-b border-rs-border">
+        <span className="text-sm font-medium text-rs-text">Live Camera Feed</span>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setShowOverlay(!showOverlay)}
+            className={`text-xs px-2 py-1 rounded border
+              ${showOverlay ? 'border-rs-green text-rs-green' : 'border-rs-border text-rs-muted'}`}
+          >
+            Lane Overlay
+          </button>
+          <button
+            onClick={() => setShowGradCam(!showGradCam)}
+            className={`text-xs px-2 py-1 rounded border
+              ${showGradCam ? 'border-rs-amber text-rs-amber' : 'border-rs-border text-rs-muted'}`}
+          >
+            GradCAM
+          </button>
         </div>
       </div>
 
-      {/* Video frame */}
-      <div
-        style={{
-          width: "100%",
-          aspectRatio: "16/9",
-          background: "linear-gradient(160deg, #07101f 0%, #0a1628 100%)",
-          borderRadius: "var(--r-sm)",
-          border: "1px solid var(--border)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          position: "relative",
-          overflow: "hidden",
-        }}
-      >
-        {/* Grid overlay for visual depth */}
-        <svg width="100%" height="100%" style={{ position: "absolute", inset: 0, opacity: 0.06 }}>
-          <defs>
-            <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
-              <path d="M 32 0 L 0 0 0 32" fill="none" stroke="#4f8ef7" strokeWidth="0.5" />
-            </pattern>
-          </defs>
-          <rect width="100%" height="100%" fill="url(#grid)" />
-        </svg>
-
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "8px", color: "var(--text-muted)", zIndex: 1 }}>
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <path d="M15 10l4.553-2.276A1 1 0 0121 8.723v6.554a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
-          </svg>
-          <span style={{ fontSize: "12px" }}>Awaiting stream…</span>
-        </div>
-
-        {/* Detection overlays */}
-        {detections.map((d) => (
-          <div
-            key={d.id}
-            style={{
-              position: "absolute",
-              left: `${(d.bbox[0] / 640) * 100}%`,
-              top:  `${(d.bbox[1] / 360) * 100}%`,
-              width: `${((d.bbox[2] - d.bbox[0]) / 640) * 100}%`,
-              height: `${((d.bbox[3] - d.bbox[1]) / 360) * 100}%`,
-              border: "1.5px solid var(--accent-cyan)",
-              borderRadius: "4px",
-              boxShadow: "0 0 8px rgba(34,211,238,0.3)",
-            }}
-          >
-            <span
-              style={{
-                background: "rgba(34,211,238,0.85)",
-                color: "#000",
-                fontSize: "9px",
-                fontWeight: 700,
-                padding: "1px 5px",
-                borderRadius: "3px",
-                position: "absolute",
-                top: "-17px",
-                left: 0,
-                whiteSpace: "nowrap",
-              }}
-            >
-              {d.label} {(d.confidence * 100).toFixed(0)}%
-            </span>
-          </div>
-        ))}
-
-        {/* Detection count badge */}
-        {detections.length > 0 && (
-          <div
-            style={{
-              position: "absolute",
-              bottom: "10px",
-              right: "10px",
-              background: "rgba(6,11,24,0.8)",
-              border: "1px solid var(--border-strong)",
-              borderRadius: "6px",
-              padding: "4px 8px",
-              fontSize: "11px",
-              color: "var(--accent-cyan)",
-              fontWeight: 600,
-            }}
-          >
-            {detections.length} object{detections.length === 1 ? "" : "s"}
+      <div className="flex-1 relative bg-black flex items-center justify-center">
+        <canvas
+          ref={canvasRef}
+          width={640}
+          height={480}
+          className="w-full h-full object-contain"
+        />
+        {!latestResult && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center text-rs-muted gap-2">
+            <div className="w-12 h-12 border-2 border-rs-border rounded-full animate-spin border-t-rs-green" />
+            <span className="text-sm">Waiting for video stream...</span>
+            <span className="text-xs">Connect via WebSocket /ws/live</span>
           </div>
         )}
       </div>
+
+      {latestResult && (
+        <div className="px-4 py-1.5 border-t border-rs-border flex justify-between text-xs text-rs-muted">
+          <span>Frame #{latestResult.frame_id || 0}</span>
+          <span>{latestResult.latency_ms?.total?.toFixed(0) || '--'}ms</span>
+          <span>{new Date(latestResult.timestamp).toLocaleTimeString()}</span>
+        </div>
+      )}
+
     </div>
-  );
+  )
 }
 
-export default VideoFeed;
+export default VideoFeed

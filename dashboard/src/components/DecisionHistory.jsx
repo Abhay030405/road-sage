@@ -1,60 +1,78 @@
-const DECISION_COLORS = {
-  LANE_KEEP:         "badge-green",
-  LANE_CHANGE_LEFT:  "badge-yellow",
-  LANE_CHANGE_RIGHT: "badge-yellow",
-  SLOW_DOWN:         "badge-red",
-  STOP:              "badge-red",
-};
+import { useRoadSage } from '../context/RoadSageContext'
+import { COMMAND_COLORS, COMMAND_ICONS, DECISION_PATH_LABELS } from '../constants'
+import { formatConfidence, timeAgo } from '../utils/helpers'
 
-export function DecisionHistory({ history = [] }) {
+function DecisionHistory() {
+  const { history, setSelectedHistoryItem, selectedHistoryItem } = useRoadSage()
+
   return (
-    <div className="card" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-      <div className="section-title">
-        Decision History
-        {history.length > 0 && (
-          <span className="badge badge-blue" style={{ marginLeft: "auto" }}>{history.length}</span>
+    <div className="bg-rs-panel rounded-lg border border-rs-border p-4 flex flex-col">
+
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-1">
+          <span className="text-xs text-rs-muted font-medium">Decision History</span>
+          <span className="text-xs text-rs-border">({history.length})</span>
+        </div>
+        {selectedHistoryItem && (
+          <button
+            onClick={() => setSelectedHistoryItem(null)}
+            className="text-xs text-rs-amber hover:text-rs-text"
+          >
+            Clear selection
+          </button>
         )}
       </div>
 
-      {history.length === 0 ? (
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "8px", padding: "24px 0", color: "var(--text-muted)" }}>
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          <span style={{ fontSize: "12px" }}>No decisions yet</span>
-        </div>
-      ) : (
-        <ul style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: "5px", maxHeight: "240px", overflowY: "auto", paddingRight: "2px" }}>
-          {history.map((entry, i) => (
-            <li
-              key={entry.ts}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                padding: "7px 10px",
-                background: i === 0 ? "var(--bg-elevated)" : "var(--bg-card-2)",
-                borderRadius: "8px",
-                border: "1px solid var(--border)",
-                transition: "opacity 0.3s",
-                opacity: i === 0 ? 1 : Math.max(0.45, 1 - i * 0.04),
-              }}
-            >
-              <span className={`badge ${DECISION_COLORS[entry.decision] ?? "badge-blue"}`} style={{ fontSize: "10px" }}>
-                {entry.decision.replaceAll("_", " ")}
-              </span>
-              <span style={{ fontSize: "11px", fontWeight: 600, color: "var(--text-secondary)" }}>
-                {(entry.confidence * 100).toFixed(0)}%
-              </span>
-              <span style={{ fontSize: "10px", color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>
-                {new Date(entry.ts).toLocaleTimeString()}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
+      <div
+        className="flex-1 overflow-y-auto space-y-1 max-h-48"
+        style={{ scrollbarWidth: 'thin' }}
+      >
+        {history.length === 0 ? (
+          <div className="text-center text-rs-muted text-xs py-4">
+            No decisions yet — waiting for stream...
+          </div>
+        ) : (
+          history.map((item, idx) => {
+            const colors = COMMAND_COLORS[item.command] ?? COMMAND_COLORS.STOP
+            const isSelected = selectedHistoryItem?.frameId === item.frameId
+            return (
+              <button
+                key={item.frameId ?? idx}
+                type="button"
+                onClick={() => setSelectedHistoryItem(isSelected ? null : item)}
+                className={`w-full text-left flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer
+                  border transition-colors
+                  ${isSelected
+                    ? 'border-rs-amber bg-rs-amber bg-opacity-10'
+                    : 'border-transparent hover:border-rs-border hover:bg-rs-bg'
+                  }`}
+              >
+                <span className={`${colors.bg} text-white text-xs font-bold
+                                  px-1.5 py-0.5 rounded min-w-16 text-center`}>
+                  {COMMAND_ICONS[item.command]} {item.command}
+                </span>
+
+                <div className="flex-1 min-w-0">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-rs-muted truncate">
+                      {DECISION_PATH_LABELS[item.decision_path] || item.decision_path}
+                    </span>
+                    <span style={{ color: colors.hex }}>
+                      {formatConfidence(item.confidence)}
+                    </span>
+                  </div>
+                  <div className="text-xs text-rs-muted opacity-60 mt-0.5">
+                    {timeAgo(item.receivedAt)}
+                  </div>
+                </div>
+              </button>
+            )
+          })
+        )}
+      </div>
+
     </div>
-  );
+  )
 }
 
-export default DecisionHistory;
+export default DecisionHistory

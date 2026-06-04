@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from prometheus_client import Counter, Histogram, make_asgi_app
+from prometheus_client import make_asgi_app
 
 from app.utils.config_validator import load_and_validate_config
 from app.engine import RoadSageEngine
@@ -48,35 +48,20 @@ from api.middleware.rate_limit import (
 )
 
 # ---------------------------------------------------------------------------
-# Prometheus metrics (module-level singletons — must be created once)
+# Prometheus metrics (module-level singletons — defined in api.metrics so
+# route modules can import them without creating circular dependencies)
 # ---------------------------------------------------------------------------
 
-REQUEST_COUNT = Counter(
-    "roadsage_http_requests_total",
-    "Total HTTP requests",
-    ["method", "endpoint", "status"],
-)
-REQUEST_LATENCY = Histogram(
-    "roadsage_request_latency_seconds",
-    "HTTP request latency",
-    ["endpoint"],
-)
-COMMAND_COUNT = Counter(
-    "roadsage_command_total",
-    "Driving commands predicted",
-    ["command"],
-)
-SAFETY_GATE_COUNT = Counter(
-    "roadsage_safety_gate_triggers_total",
-    "Safety gate trigger count",
-)
-LANE_DETECTION_FAILURES = Counter(
-    "roadsage_lane_detection_failures_total",
-    "Frames with no lanes detected",
-)
-ML_FALLBACK_COUNT = Counter(
-    "roadsage_ml_fallback_activations_total",
-    "ML fallback activations",
+from api.metrics import (  # noqa: E402
+    REQUEST_COUNT,
+    REQUEST_LATENCY,
+    COMMAND_COUNT,
+    SAFETY_GATE_COUNT,
+    LANE_DETECTION_FAILURES,
+    ML_FALLBACK_COUNT,
+    CONFIDENCE_HISTOGRAM,
+    INFERENCE_LATENCY,
+    record_prediction_metrics,
 )
 
 # ---------------------------------------------------------------------------
