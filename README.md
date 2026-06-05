@@ -92,6 +92,8 @@ make phase7-check     Phase 7 exit-criteria validation
 
 ## Architecture
 
+![RoadSage System Architecture](docs/architecture.png)
+
 5-layer hybrid decision engine:
 
 ```
