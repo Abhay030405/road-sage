@@ -1,3 +1,5 @@
+'use client'
+
 import { createContext, useContext, useState, useCallback } from 'react'
 import { MAX_HISTORY_ITEMS } from '../constants'
 

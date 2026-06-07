@@ -4,10 +4,10 @@ export const HEALTH_POLL_INTERVAL_MS = 3000
 export const MAX_HISTORY_ITEMS = 50
 
 export const COMMAND_COLORS = {
-  FORWARD: { bg: 'bg-rs-green', text: 'text-white', hex: '#22c55e' },
-  LEFT:    { bg: 'bg-rs-amber', text: 'text-white', hex: '#f59e0b' },
-  RIGHT:   { bg: 'bg-rs-blue',  text: 'text-white', hex: '#3b82f6' },
-  STOP:    { bg: 'bg-rs-red',   text: 'text-white', hex: '#ef4444' },
+  FORWARD: { bg: 'bg-rs-green', text: 'text-white', hex: '#3d8b5f' },
+  LEFT:    { bg: 'bg-rs-amber', text: 'text-white', hex: '#c47d15' },
+  RIGHT:   { bg: 'bg-rs-blue',  text: 'text-white', hex: '#2e6da4' },
+  STOP:    { bg: 'bg-rs-red',   text: 'text-white', hex: '#c0172b' },
 }
 
 export const COMMAND_ICONS = {

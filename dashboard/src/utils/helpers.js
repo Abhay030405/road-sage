@@ -25,12 +25,12 @@ export const formatLatency = (ms) => {
 
 export const getCommandColor = (command) => {
   const map = {
-    FORWARD: '#22c55e',
-    LEFT:    '#f59e0b',
-    RIGHT:   '#3b82f6',
-    STOP:    '#ef4444',
+    FORWARD: '#3d8b5f',
+    LEFT:    '#c47d15',
+    RIGHT:   '#2e6da4',
+    STOP:    '#c0172b',
   }
-  return map[command] || '#64748b'
+  return map[command] || '#5a5a5a'
 }
 
 export const timeAgo = (isoString) => {

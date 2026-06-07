@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --rs-bg:     #000000;
+  --rs-panel:  #111111;
+  --rs-border: #2a2a2a;
+  --rs-green:  #3d8b5f;
+  --rs-amber:  #c47d15;
+  --rs-blue:   #2e6da4;
+  --rs-red:    #c0172b;
+  --rs-text:   #e8e8e8;
+  --rs-muted:  #5a5a5a;
+}
+
+.cockpit-grid {
+  background-image:
+    linear-gradient(rgba(42, 42, 42, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(42, 42, 42, 0.07) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+@layer base {
+  body {
+    background-color: var(--rs-bg);
+    color: var(--rs-text);
+    font-family: var(--font-sans), system-ui, sans-serif;
+    font-feature-settings: 'ss01', 'ss02', 'cv01';
+    -webkit-font-smoothing: antialiased;
+  }
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: var(--rs-panel); }
+  ::-webkit-scrollbar-thumb { background: var(--rs-border); border-radius: 2px; }
+}
